@@ -89,6 +89,65 @@ class CustomDataset(Dataset):
     def close(self):
         self.h5_file.close()
 
+class DerivedQuanities(Dataset):
+    def __init__(self, h5_file_path: str, start:int, end:int, transform=None, input_size:int = 0, batch_size:int=32):
+        self.h5_file_path = h5_file_path
+        self.transform = transform
+        self.input_size = input_size
+        self.start = start
+        self.end = end
+
+        self.index_adjustment = [self.start for i in range(batch_size)]
+
+        self.load_data()
+    
+    def __len__(self):
+        return self.end-self.start
+    
+    def __getitem__(self, index):
+        """
+        Get a specific chunk of data
+        Returns:
+            tuple: (input_data, targets)
+            - input_data: tensor of shape (channels, x_dim, y_dim, chunk_size)
+            - targets: dictionary of invariants for this chunk
+        """
+        index = list(map(lambda a, b: a + b, index, self.index_adjustment))
+        x = self.inputs['data'][index]  # Shape: (channels, x_dim, y_dim,)
+        y = np.squeeze(np.array([[self.inputs['derived_data']['$\\Gamma_c$'][index]],
+                     [self.inputs['derived_data']['$\\Gamma_n$'][index]],
+                     [self.inputs['derived_data']['$\\mathcal{D}^E$'][index]],
+                     [self.inputs['derived_data']['$\\mathcal{D}^U$'][index]],
+                     [self.inputs['derived_data']['energy'][index]],
+                     [self.inputs['derived_data']['enstrophy'][index]],
+                     [self.inputs['derived_data']['time'][index]],
+        ]), axis=1).transpose(1,0,) # Shape: (7,)
+        y = y[...,1].astype(np.float32)
+        
+        return {'x': x, 'y':y,}
+    
+    def _load_h5_file_with_data(self, file_path:str, data_key:str = 'data', derived_data_key:str = "invariants"):
+        """Method for loading .h5 files
+        
+        :returns: dict that contains name of the .h5 file as stored in the .h5 file, as well as a generator of the data
+        """
+        file = h5py.File(file_path)
+        data = file[data_key]
+        self.length = data.shape[0]
+        derived_data = file[derived_data_key]
+        return dict(file=file, data=data, derived_data=derived_data)
+    
+    def load_data(self,):
+        """Loads input data and optional target data into the dataset
+        Args:
+            input_file (str): Name of the input .h5 file
+            target_files (dict): Dictionary mapping task names to target .h5 file names
+        """
+        self.inputs = self._load_h5_file_with_data(self.h5_file_path) #Dictionary with keys "file", "data"...
+    
+    def close(self):
+        self.h5_file.close()
+
 
 class RandomBatchSampler(Sampler):
     def __init__(self, dataset, batch_size):
