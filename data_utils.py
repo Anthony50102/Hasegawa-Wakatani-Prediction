@@ -7,7 +7,7 @@ from typing import Dict, Any, Tuple, Optional
 
 
 class CustomDataset(Dataset):
-    def __init__(self, h5_file_path: str, transform=None, input_size:int = 0):
+    def __init__(self, h5_file_path: str, channel:int,transform=None, input_size:int = 0):
         self.h5_file = h5py.File(h5_file_path, 'r')
         self.data = self.h5_file['data']
         self.time = self.h5_file['time']
@@ -20,6 +20,7 @@ class CustomDataset(Dataset):
         self.chunk_size = self.data.shape[-1]
 
         self.input_size = input_size
+        self.channel = channel
     
     def __len__(self):
         return self.n_chunks
@@ -42,8 +43,8 @@ class CustomDataset(Dataset):
                      [self.inputs['derived_data']['time'][index]],
         ]), axis=1).transpose(1,0,2)
 
-        x, der_x  = data_chunk[...,:self.input_size], der_chunk[...,:self.input_size]
-        y, der_y = data_chunk[...,self.input_size:], der_chunk[...,self.input_size:]
+        x, der_x  = data_chunk[:,self.channel,...,:self.input_size], der_chunk[...,:self.input_size]
+        y, der_y = data_chunk[:,self.channel,...,self.input_size:], der_chunk[...,self.input_size:]
         
         # if self.transform:
         #     inputs = self.transform(inputs)
@@ -189,13 +190,13 @@ def fast_loader(dataset, batch_size=32, drop_last=False, transforms=None):
 
 
 def create_dataloaders(train_file: str, test_file: str, batch_size: int,input_size:int,
-                              transform=None, drop_last: bool = False,):
+                              transform=None, drop_last: bool = False, channel:int = 0):
     """
     Create train and test data loaders for plasma physics data
     """
-    train_dataset = CustomDataset(train_file, transform=transform, input_size=input_size)
+    train_dataset = CustomDataset(train_file, transform=transform, input_size=input_size, channel=channel)
     train_dataset.load_data(train_file)
-    test_dataset = CustomDataset(test_file, transform=transform, input_size=input_size)
+    test_dataset = CustomDataset(test_file, transform=transform, input_size=input_size, channel=channel)
     test_dataset.load_data(test_file)
     
     train_loader = fast_loader(train_dataset, batch_size=batch_size, drop_last=drop_last)
