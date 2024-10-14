@@ -33,7 +33,9 @@ class CustomDataset(Dataset):
             - input_data: tensor of shape (channels, x_dim, y_dim, chunk_size)
             - targets: dictionary of invariants for this chunk
         """
+        print(index)
         data_chunk = self.inputs['data'][index]  # Shape: (channels, x_dim, y_dim, chunk_size)
+        print(data_chunk.shape)
         der_chunk = np.squeeze(np.array([[self.inputs['derived_data']['$\\Gamma_c$'][index]],
                      [self.inputs['derived_data']['$\\Gamma_n$'][index]],
                      [self.inputs['derived_data']['$\\mathcal{D}^E$'][index]],
@@ -41,7 +43,7 @@ class CustomDataset(Dataset):
                      [self.inputs['derived_data']['energy'][index]],
                      [self.inputs['derived_data']['enstrophy'][index]],
                      [self.inputs['derived_data']['time'][index]],
-        ]), axis=1).transpose(1,0,2)
+        ])).transpose(1,0)
 
         x, der_x  = data_chunk[:,self.channel,...,:self.input_size], der_chunk[...,:self.input_size]
         y, der_y = data_chunk[:,self.channel,...,self.input_size:], der_chunk[...,self.input_size:]
@@ -156,19 +158,23 @@ class RandomBatchSampler(Sampler):
         self.dataset_length = len(dataset)
         self.n_batches = self.dataset_length / self.batch_size
         self.batch_ids = torch.randperm(int(self.n_batches))
+        print(f"batchids {self.batch_ids}")
 
     def __len__(self):
         return self.batch_size
 
     def __iter__(self):
         for id in self.batch_ids:
+            print(id)
             idx = torch.arange(id * self.batch_size, (id + 1) * self.batch_size)
+            print(idx)
             for index in idx:
                 yield int(index)
 
         # Handle the last incomplete batch if dataset length isn't divisible by batch size
         if int(self.n_batches) < self.n_batches:
             idx = torch.arange(int(self.n_batches) * self.batch_size, self.dataset_length)
+            print(idx)
             for index in idx:
                 yield int(index)
 
@@ -203,3 +209,67 @@ def create_dataloaders(train_file: str, test_file: str, batch_size: int,input_si
     test_loader = fast_loader(test_dataset, batch_size=batch_size, drop_last=drop_last)
     
     return train_loader, test_loader
+
+
+class ChunkBatchSampler(Sampler):
+    def __init__(self, indices, batch_size):
+        self.indices = indices
+        self.batch_size = batch_size
+        self.indices_length = len(indices)
+
+        # Check if the dataset size is at least 1
+        if self.indices_length == 0:
+            raise ValueError("The dataset cannot be empty.")
+        
+        self.n_batches = (self.indices_length + self.batch_size - 1) // self.batch_size  # Ceiling division
+        self.batch_ids = torch.randperm(self.n_batches)
+
+    def __len__(self):
+        return self.indices_length
+
+    def __iter__(self):
+        for id in self.batch_ids:
+            start_idx = id * self.batch_size
+            end_idx = min(start_idx + self.batch_size, self.indices_length)  # Ensure we don't exceed the length
+            
+            # Get the corresponding indices
+            idx = self.indices[start_idx:end_idx]
+            idx = idx.flatten()
+            for index in idx:
+                yield int(index)
+
+
+def create_loaders(dataset, subsample_rate, chunk_size, train_split_ratio, batch_size=32, drop_last=False, transforms=None,):
+    """Implements fast loading by leveraging .h5 dataset characteristics
+    Optimizes for HDF5's efficient sequential reading by using weak shuffling:
+    - Batches data and shuffles batches instead of individual items
+    - Reduces number of random accesses to HDF5 file
+    """
+    indices = torch.arange(0, len(dataset), step=subsample_rate)[:-1]
+    chucked_indices = indices.view(-1, chunk_size)
+    shuffled_indices = chucked_indices[torch.randperm(len(chucked_indices))]
+    train_size = int(train_split_ratio * len(shuffled_indices))
+    train_indices = shuffled_indices[:train_size]
+    sorted_indices = torch.argsort(train_indices[:, 0])
+    train_indices = train_indices[sorted_indices]
+    test_indices = shuffled_indices[train_size:]
+    sorted_indices = torch.argsort(test_indices[:,0])
+    test_indices = test_indices[sorted_indices]
+
+    return DataLoader(
+        dataset,
+        batch_size=None,  # Must be disabled when using samplers
+        sampler=BatchSampler(
+            ChunkBatchSampler(train_indices, batch_size),
+            batch_size=batch_size,
+            drop_last=drop_last
+        )
+    ),DataLoader(
+        dataset,
+        batch_size=None,  # Must be disabled when using samplers
+        sampler=BatchSampler(
+            ChunkBatchSampler(test_indices, batch_size),
+            batch_size=batch_size,
+            drop_last=drop_last
+        )
+    )
