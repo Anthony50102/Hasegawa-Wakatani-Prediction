@@ -4,7 +4,8 @@ import torch
 import numpy as np
 from torch.utils.data import Dataset, DataLoader, Sampler, BatchSampler
 from typing import Dict, Any, Tuple, Optional
-
+import itertools
+import timeit
 
 class CustomDataset(Dataset):
     def __init__(self, h5_file_path: str, channel:int,transform=None, input_size:int = 0):
@@ -28,25 +29,39 @@ class CustomDataset(Dataset):
     def __getitem__(self, index):
         """
         Get a specific chunk of data
+        Ideally we want to be given a slice of the data that we want to grab
         Returns:
             tuple: (input_data, targets)
             - input_data: tensor of shape (channels, x_dim, y_dim, chunk_size)
             - targets: dictionary of invariants for this chunk
         """
-        print(index)
-        data_chunk = self.inputs['data'][index]  # Shape: (channels, x_dim, y_dim, chunk_size)
+        index = list(itertools.chain(*index)) # Flatten our list
+        data_chunk = self.inputs['data'][index[0]:index[-1]]
         print(data_chunk.shape)
-        der_chunk = np.squeeze(np.array([[self.inputs['derived_data']['$\\Gamma_c$'][index]],
+        data_chunk = data_chunk.reshape(32,3,512,512,10)
+
+        # der_chunk = np.squeeze(np.array([[self.inputs['derived_data']['$\\Gamma_c$'][index]],
+        #              [self.inputs['derived_data']['$\\Gamma_n$'][index]],
+        #              [self.inputs['derived_data']['$\\mathcal{D}^E$'][index]],
+        #              [self.inputs['derived_data']['$\\mathcal{D}^U$'][index]],
+        #              [self.inputs['derived_data']['energy'][index]],
+        #              [self.inputs['derived_data']['enstrophy'][index]],
+        #              [self.inputs['derived_data']['time'][index]],
+        # ])).transpose(1,0)
+
+        der_chunk = np.array([[self.inputs['derived_data']['$\\Gamma_c$'][index]],
                      [self.inputs['derived_data']['$\\Gamma_n$'][index]],
                      [self.inputs['derived_data']['$\\mathcal{D}^E$'][index]],
                      [self.inputs['derived_data']['$\\mathcal{D}^U$'][index]],
                      [self.inputs['derived_data']['energy'][index]],
                      [self.inputs['derived_data']['enstrophy'][index]],
                      [self.inputs['derived_data']['time'][index]],
-        ])).transpose(1,0)
+        ]).reshape(32,-1,10)
 
-        x, der_x  = data_chunk[:,self.channel,...,:self.input_size], der_chunk[...,:self.input_size]
-        y, der_y = data_chunk[:,self.channel,...,self.input_size:], der_chunk[...,self.input_size:]
+        print(der_chunk.shape)
+
+        x, der_x  = np.expand_dims(data_chunk[:,self.channel,...,:self.input_size], axis=1), der_chunk[...,:self.input_size]
+        y, der_y = np.expand_dims(data_chunk[:,self.channel,...,self.input_size:], axis=1), der_chunk[...,self.input_size:]
         
         # if self.transform:
         #     inputs = self.transform(inputs)
@@ -54,6 +69,7 @@ class CustomDataset(Dataset):
         # targets = {
         #     name: data[index] for name, data in self.invariants.items()
         # }
+
         
         return {'x': x, 'y':y, 'der_x': der_x, 'der_y': der_y}
     
@@ -234,9 +250,8 @@ class ChunkBatchSampler(Sampler):
             
             # Get the corresponding indices
             idx = self.indices[start_idx:end_idx]
-            idx = idx.flatten()
-            for index in idx:
-                yield int(index)
+            for i in range(idx.shape[0]):
+                yield idx[i]
 
 
 def create_loaders(dataset, subsample_rate, chunk_size, train_split_ratio, batch_size=32, drop_last=False, transforms=None,):
@@ -246,8 +261,10 @@ def create_loaders(dataset, subsample_rate, chunk_size, train_split_ratio, batch
     - Reduces number of random accesses to HDF5 file
     """
     indices = torch.arange(0, len(dataset), step=subsample_rate)[:-1]
-    chucked_indices = indices.view(-1, chunk_size)
-    shuffled_indices = chucked_indices[torch.randperm(len(chucked_indices))]
+    chunked_inidices = indices.view(-1, chunk_size)
+    # chunked_indices = indices[::chunk_size]
+    # print(chunked_indices)
+    shuffled_indices = chunked_inidices[torch.randperm(len(chunked_inidices))]
     train_size = int(train_split_ratio * len(shuffled_indices))
     train_indices = shuffled_indices[:train_size]
     sorted_indices = torch.argsort(train_indices[:, 0])
@@ -273,3 +290,33 @@ def create_loaders(dataset, subsample_rate, chunk_size, train_split_ratio, batch
             drop_last=drop_last
         )
     )
+
+
+class CustomDataset2(CustomDataset):
+    def __init__(self, h5_file_path: str, channel: int, transform=None, input_size: int = 0):
+        super().__init__(h5_file_path, channel, transform, input_size)()
+    def __getitem__(self, index):
+        """
+        Get a specific chunk of data
+        Returns:
+            tuple: (input_data, targets)
+            - input_data: tensor of shape (channels, x_dim, y_dim, chunk_size)
+            - targets: dictionary of invariants for this chunk
+        """
+        print(index)
+        data_chunk = self.inputs['data'][index]  # Shape: (channels, x_dim, y_dim, chunk_size)
+        print(data_chunk.shape)
+        der_chunk = np.squeeze(np.array([[self.inputs['derived_data']['$\\Gamma_c$'][index]],
+                     [self.inputs['derived_data']['$\\Gamma_n$'][index]],
+                     [self.inputs['derived_data']['$\\mathcal{D}^E$'][index]],
+                     [self.inputs['derived_data']['$\\mathcal{D}^U$'][index]],
+                     [self.inputs['derived_data']['energy'][index]],
+                     [self.inputs['derived_data']['enstrophy'][index]],
+                     [self.inputs['derived_data']['time'][index]],
+        ])).transpose(1,0)
+
+        x, der_x  = data_chunk[:,self.channel,...,:self.input_size], der_chunk[...,:self.input_size]
+        y, der_y = data_chunk[:,self.channel,...,self.input_size:], der_chunk[...,self.input_size:]
+        
+        
+        return {'x': x, 'y':y, 'der_x': der_x, 'der_y': der_y}
