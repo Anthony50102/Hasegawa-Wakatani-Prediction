@@ -22,3 +22,30 @@
   - [Arxiv Paper](https://arxiv.org/pdf/2308.07051)
   - [NVIDIA Modulus Documentation](https://docs.nvidia.com/deeplearning/modulus/modulus-v2209/user_guide/neural_operators/darcy_pino.html)
   - [ACM Digital Library](https://dl.acm.org/doi/10.1145/3648506)
+
+
+## Misc
+
+### Key Directions for Training the Surrogate Model
+
+1. **Loss Function Design**:
+   - Investigate **multi-objective loss functions**. Combine the current MSE loss for the image output with an additional loss term that evaluates the discrepancy in derived quantities. For example:
+     ```
+     Loss = λ₁ * MSE_image + λ₂ * MSE_derived
+     ```
+     This allows the model to learn to predict the next "image" while also improving predictions of the derived quantities.
+
+2. **Differentiability of Derived Quantities**:
+   - Ensure that the calculation of derived quantities is differentiable so that gradients can propagate back through this part of the pipeline during training. If it's not differentiable, approximate it with a differentiable proxy or explore gradient-free methods for that component.
+
+3. **Autoregressive Consistency**:
+   - Validate that the loss on derived quantities aligns with the autoregressive use case. Perform short rollouts during training to ensure that predictions remain consistent over time when used autoregressively.
+
+4. **Derived Quantity-Based Training Objectives**:
+   - Explore training with **custom loss functions** that measure discrepancies in statistical properties of the derived quantities (e.g., mean, variance, higher-order moments) across an autoregressive sequence.
+
+5. **Curriculum Learning**:
+   - Gradually shift the focus of training from purely image-based MSE to derived-quantity-based objectives. For example, start with a high weight on `MSE_image` and then transition to giving more importance to the derived quantity loss.
+
+6. **Domain-Specific Regularization**:
+   - Add regularization terms that enforce physical constraints or statistical properties specific to the domain. For example, penalize invalid or unphysical predictions of the derived quantities to improve alignment with the problem’s requirements.
